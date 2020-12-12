@@ -1,8 +1,21 @@
-import numpy as np
-import pandas as pd
 from enum import Enum
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
 
 
+def plot_SEIR(S, E, I, R):
+    steps = range(len(S))
+    plt.figure()
+    plt.title("SEIR")
+    plt.plot(steps, S, label="S")
+    plt.plot(steps, E, label="E")
+    plt.plot(steps, I, label="I")
+    plt.plot(steps, R, label="R")
+    plt.legend()
+    plt.show()
+    
+    
 #1, 193, 385 = beginnings of days
 
 # S = susceptible, E = exposed, I = infected, R = recovered
@@ -11,7 +24,7 @@ class State():
     
 # Duration in timesteps before moving on to next state. (1 timestep = 5 minutes)
 class Duration():
-    E, I = 5, 572
+    E, I = 700, 2000
 
 class SEIR_Simulator:
     # Source: https://github.com/skissler/haslemere/blob/master/Kissler_SI.pdf
@@ -20,6 +33,11 @@ class SEIR_Simulator:
         """
         Parameters and their values
         
+        Force of infection parameters. F(d) =              0    if d > xi
+                                            = a * exp(d/rho)    otherwise.
+                                            
+                                       P(infection)_i = 1 - exp(-sum(F(d_ij) : j is i's infected neighbor))
+        
         xi       Infection cutoff distance. d > xi -> no chance of infection.
         a        Value of F at d = 0
         rho      Value of F at d = 1/e
@@ -27,27 +45,24 @@ class SEIR_Simulator:
         n        Number of people
         maxtime  Maximum number of timesteps provided in simulation data
         """
+        
         self.df = df.copy()
         self.df['Time'] = self.df['Time'] - 1
         self.df['Person1'] -= 1
         self.df['Person2'] -= 1
         
-        # Force of infection parameters. F(d) = 0 if d > xi, and a * exp(d/rho) otherwise.
-        
         self.xi = 20.0 
-        # 
         self.a = 1.0
-        # 
         self.rho = 10.0 
         
-        self.n = int(df_data['Person2'].max())
+        self.n = int(self.df['Person2'].max() + 1)
         self.state = np.array([State.S] * self.n)
         self.timer = np.array([0] * self.n) # Countdown to move to next state.
         self.susceptible = np.array([True] * self.n)
         self.infectious = np.array([False] * self.n)
         
         # Create tdmatrix. tdmatrix[t,i,j] = distance between i and j at timestep t.
-        self.maxtime = int(df_data['Time'].max())
+        self.maxtime = int(self.df['Time'].max() + 1)
         self.tdmatrix = np.zeros((self.maxtime, self.n, self.n))
         self.tdmatrix.fill(self.xi+1) # if no edge exists, set d > xi to simulate no contact.
         times = self.df['Time'].to_numpy().astype(int)
@@ -68,12 +83,12 @@ class SEIR_Simulator:
             self.state[indices] = State.E
             self.timer[indices] = Duration.E
             self.susceptible[indices] = 0
-            self.infectious[indices] = 0
+            self.infectious[indices] = 1
         elif s == State.I:
             self.state[indices] = State.I
             self.timer[indices] = Duration.I
             self.susceptible[indices] = 0
-            self.infectious[indices] = 1
+            self.infectious[indices] = 0
         elif s == State.R:
             self.state[indices] = State.R
             self.susceptible[indices] = 0
@@ -84,12 +99,14 @@ class SEIR_Simulator:
         # This function assumes all individuals are currently not infected.
         indices = np.random.choice(np.arange(self.n), replace=False, size=k)
         self.set_state(indices, State.I)
+        
+    def set_k_random(self, k, state):
+        indices = np.random.choice(np.arange(self.n), replace=False, size=k)
+        self.set_state(indices, state)
 
     def probability_of_exposure_vectorized(self, t):
         currdists = self.tdmatrix[t]
         forcematrix = (currdists <= self.xi) * self.a * np.exp(-currdists / self.rho) * self.infectious
-#         print(np.nonzero(forcematrix))
-#         print(np.nonzero(self.infectious))
         probs = forcematrix.dot(np.ones(self.n)) * self.susceptible
         return probs
     
@@ -130,6 +147,7 @@ class SEIR_Simulator:
             print("===========================")
             self.printSEIR("init")
             
+        # Initialize SEIR history
         S, E, I, R = [], [], [], []
         
         for t in range(0, timesteps):
